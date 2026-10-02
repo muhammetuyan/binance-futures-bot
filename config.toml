@@ -1,0 +1,42 @@
+[trading]
+# Boş liste: tüm likit USDT perpetual havuzunu dinamik tarar.
+symbols = []
+interval = "15m"
+confirmation_interval = "1h"
+scan_interval_minutes = 15
+candle_limit = 500
+poll_seconds = 20
+mode = "paper"
+paper_balance = 100.0
+universe_limit = 30
+minimum_24h_quote_volume = 25000000
+testnet = true
+# Paper modunda yalnızca sanal emir üretir.
+dry_run = false
+market_base_url = "https://fapi.binance.com"
+trading_base_url = "https://testnet.binancefuture.com"
+
+[risk]
+leverage = 10
+risk_per_trade = 0.02
+daily_loss_limit = 0.10
+max_margin_fraction = 0.40
+minimum_margin_usdt = 5.0
+maximum_margin_usdt = 40.0
+max_open_positions = 4
+# 7+ seçilmiş yön onayı sadece pozisyon sayısı sınırını aşar.
+position_limit_override_confirmations = 7
+
+[strategy]
+atr_stop_multiple = 2.2
+reward_risk_ratio = 2.0
+minimum_signal_score = 85
+# Giriş için gereken analiz onayı; puan yalnızca teminatı ölçekler.
+minimum_confirmations = 4
+minimum_adx = 20.0
+minimum_volume_ratio = 0.8
+minimum_stop_percent = 0.8
+long_rsi_min = 45.0
+long_rsi_max = 72.0
+short_rsi_min = 28.0
+short_rsi_max = 55.0

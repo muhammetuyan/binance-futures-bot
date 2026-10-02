@@ -1,0 +1,79 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: 'Segoe UI', Arial, sans-serif;
+  --font-mono: Consolas, 'Courier New', monospace;
+  --font-heading: var(--font-sans);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+:root {
+  color-scheme: dark;
+  --background: #080e18;
+  --foreground: #f7f7f5;
+  --card: #101b2b;
+  --card-foreground: #f7f7f5;
+  --primary: #f5be36;
+  --primary-foreground: #17130a;
+  --secondary: #1a1e25;
+  --secondary-foreground: #f7f7f5;
+  --muted: #171b22;
+  --muted-foreground: #a4b4ca;
+  --accent: #202631;
+  --accent-foreground: #f7f7f5;
+  --destructive: #ef5a67;
+  --border: rgba(255, 255, 255, 0.09);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: #f5be36;
+  --accent-gold: #f5be36;
+  --radius: 0.75rem;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; background: var(--background); }
+  body { @apply bg-background text-foreground; min-width: 320px; font-family: 'Segoe UI', Arial, sans-serif; }
+  button { cursor: pointer; }
+  ::selection { background: rgba(245, 190, 54, 0.25); }
+}
+
+@layer components {
+  .atlas-dashboard [data-slot='card'] {
+    border-color: rgb(158 184 220 / 12%);
+    border-radius: 1.1rem;
+    box-shadow: 0 12px 35px rgb(0 0 0 / 14%);
+    min-width: 0;
+  }
+  .atlas-dashboard [data-slot='card-title'] { font-size: 1.05rem; letter-spacing: -.025em; }
+  .atlas-dashboard table td { padding-right: 1rem; }
+  .atlas-dashboard table tr:hover { background: rgb(158 184 220 / 3%); }
+  .atlas-dashboard button:focus-visible { outline: 2px solid #f5be36; outline-offset: 3px; }
+  .rsi-meter { background: linear-gradient(90deg, #f8717166 0% 30%, #52677f55 30% 70%, #34d39966 70% 100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
