@@ -78,6 +78,12 @@ class BinanceFuturesClient:
         # Public USD-M snapshot; no credentials needed.
         return self._request("GET", "/fapi/v1/depth", {"symbol": symbol, "limit": 100}, base_url=self.settings.market_base_url)
 
+    def get_monitoring_candles(self, symbol: str, start_time: int) -> list[Candle]:
+        rows = self._request("GET", "/fapi/v1/klines", {
+            "symbol": symbol, "interval": "1m", "startTime": start_time, "limit": 1000,
+        }, base_url=self.settings.market_base_url)
+        return [Candle(int(row[0]), float(row[1]), float(row[2]), float(row[3]), float(row[4]), float(row[5]), int(row[6])) for row in rows]
+
     def discover_symbols(self, limit: int, minimum_quote_volume: float) -> list[str]:
         exchange = self._request("GET", "/fapi/v1/exchangeInfo", base_url=self.settings.market_base_url)
         tickers = self._request("GET", "/fapi/v1/ticker/24hr", base_url=self.settings.market_base_url)
@@ -179,6 +185,12 @@ class BinanceFuturesClient:
             "margin_balance": float(account.get("totalMarginBalance", wallet + unrealized)),
             "initial_margin": float(account.get("totalInitialMargin", 0.0)),
         }
+
+    def get_api_key_restrictions(self) -> dict[str, Any]:
+        """Read API-key permissions without placing an order."""
+        return self._signed(
+            "GET", "/sapi/v1/account/apiRestrictions", base_url="https://api.binance.com"
+        )
 
     def get_positions(self) -> list[Position]:
         account = self._signed_with_fallback("GET", "/fapi/v3/account", "/fapi/v2/account")
@@ -315,6 +327,7 @@ class BinanceFuturesClient:
         path: str,
         params: dict[str, object] | None = None,
         trade: bool = False,
+        base_url: str | None = None,
     ) -> Any:
         if not self.settings.has_credentials:
             raise RuntimeError("Binance testnet API anahtarları ayarlanmamış")
@@ -328,7 +341,8 @@ class BinanceFuturesClient:
             hashlib.sha256,
         ).hexdigest()
         payload["signature"] = signature
-        return self._request(method, path, payload, signed=True, trade=trade, base_url=self.settings.trading_base_url)
+        return self._request(method, path, payload, signed=True, trade=trade,
+                             base_url=base_url or self.settings.trading_base_url)
 
     def _request(
         self,

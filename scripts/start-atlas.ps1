@@ -1,5 +1,6 @@
 param(
-  [switch]$NoBrowser
+  [switch]$NoBrowser,
+  [switch]$KeepPaused
 )
 
 $ErrorActionPreference = "Stop"
@@ -7,6 +8,14 @@ $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $runtimeDir = Join-Path $projectRoot "runtime"
 $pidFile = Join-Path $runtimeDir "processes.json"
 New-Item -ItemType Directory -Force -Path $runtimeDir | Out-Null
+$tailscalePath = Join-Path $env:ProgramFiles "Tailscale\tailscale.exe"
+if (Test-Path -LiteralPath $tailscalePath) {
+    try {
+        $network = (& $tailscalePath status --json | ConvertFrom-Json)
+        if ($network.BackendState -eq 'Running') { $env:ATLAS_REMOTE_HOST = $network.Self.DNSName.TrimEnd('.') }
+        & (Join-Path $PSScriptRoot 'connect-phone.ps1') -Quiet
+    } catch { Write-Warning "Telefon bağlantısı kontrol edilemedi; yerel bot başlatılacak." }
+}
 
 function Test-AtlasProcess {
     param([int]$ProcessId, [string]$Needle)
@@ -38,7 +47,7 @@ if ($null -ne $existingBackend -and $null -ne $existingDashboard) {
         dashboard = $existingDashboard.ProcessId
         project = $projectRoot
     } | ConvertTo-Json | Set-Content -Encoding UTF8 $pidFile
-    Resume-Atlas
+    if (-not $KeepPaused) { Resume-Atlas }
     if (-not $NoBrowser) { Start-Process "http://localhost:3000/" }
     exit 0
 }
@@ -54,7 +63,7 @@ $dashboard = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" -Worki
 $ready = $false
 for ($attempt = 0; $attempt -lt 60; $attempt++) {
     try {
-        $dashboardResponse = Invoke-WebRequest -UseBasicParsing "http://localhost:3000/" -TimeoutSec 2
+        $dashboardResponse = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:3000/" -TimeoutSec 10
         $healthResponse = Invoke-WebRequest -UseBasicParsing "http://127.0.0.1:8788/api/health" -TimeoutSec 2
         if ($dashboardResponse.StatusCode -eq 200 -and $healthResponse.StatusCode -eq 200) {
             $ready = $true
@@ -81,7 +90,7 @@ $runningDashboard = Get-AtlasPortOwner -Port 3000 -Needle "$projectRoot"
     dashboard = $runningDashboard.ProcessId
     project = $projectRoot
 } | ConvertTo-Json | Set-Content -Encoding UTF8 $pidFile
-Resume-Atlas
+if (-not $KeepPaused) { Resume-Atlas }
 
 if (-not $NoBrowser) {
   Start-Process "http://localhost:3000/"

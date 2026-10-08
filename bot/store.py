@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+from .persistence import atomic_json_write
 
 
 class RuntimeStore:
@@ -29,7 +29,8 @@ class RuntimeStore:
         self._atomic_write(self.status_path, payload)
 
     def read_control(self) -> dict[str, Any]:
-        return self._read_json(self.control_path, {"paused": False})
+        # Missing/unreadable controls must not accidentally enable new orders.
+        return self._read_json(self.control_path, {"paused": True})
 
     def write_control(self, paused: bool) -> None:
         self._atomic_write(
@@ -90,7 +91,7 @@ class RuntimeStore:
     def _read_json(self, path: Path, fallback: dict[str, Any]) -> dict[str, Any]:
         with self._lock:
             try:
-                with path.open("r", encoding="utf-8") as handle:
+                with path.open("r", encoding="utf-8-sig") as handle:
                     value = json.load(handle)
                 return value if isinstance(value, dict) else dict(fallback)
             except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -98,16 +99,13 @@ class RuntimeStore:
 
     def _atomic_write(self, path: Path, payload: dict[str, Any]) -> None:
         with self._lock:
-            self.directory.mkdir(parents=True, exist_ok=True)
-            descriptor, temporary_name = tempfile.mkstemp(
-                prefix=f"{path.stem}-",
-                suffix=".tmp",
-                dir=self.directory,
-            )
-            try:
-                with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                    json.dump(payload, handle, ensure_ascii=False, indent=2)
-                os.replace(temporary_name, path)
-            finally:
-                if os.path.exists(temporary_name):
-                    os.unlink(temporary_name)
+            atomic_json_write(path, payload)
+
+    def read_execution_state(self) -> dict[str, Any]:
+        return self._read_json(self.directory / "executions.json", {})
+
+    def record_execution(self, symbol: str, candle_time: int) -> None:
+        with self._lock:
+            state = self.read_execution_state()
+            state[symbol] = candle_time
+            self._atomic_write(self.directory / "executions.json", state)

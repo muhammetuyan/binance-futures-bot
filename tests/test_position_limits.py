@@ -63,6 +63,8 @@ class PositionLimitTests(unittest.TestCase):
                 self.engine._active_symbols = Mock(return_value=[])
                 self.store.read_control.return_value = {"paused": paused}
                 self.broker.get_positions.return_value = positions(4)
+                self.broker.get_cached_positions.return_value = positions(4)
+                self.broker.monitoring_errors = {}
                 self.broker.get_trade_history.return_value = []
                 self.broker.get_account_snapshot.return_value = {"equity": equity, "wallet_balance": equity, "available_balance": equity, "initial_margin": 0, "margin_balance": equity}
                 self.engine._start_equity = 100

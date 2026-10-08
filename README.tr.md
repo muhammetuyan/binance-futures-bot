@@ -2,61 +2,44 @@
 
 [English](README.md) | **Türkçe**
 
-> **Geliştirme devam ediyor.** Özellikler ve işlem kuralları değişebilir.
+> **Geliştirme devam ediyor.** Botun özellikleri ve işlem kuralları değişebilir.
+
+## Son güncelleme — 8 Ekim 2026
+
+Kontrol paneline İngilizce/Türkçe seçeneği eklendi. Bu sürüm ayrıca sanal işlem
+mum takibini, kesintilerden sonra kurtarmayı, yerel durum kayıtlarını, pozisyon
+izleme uyarılarını ve yinelenen emir korumasını iyileştiriyor. Telefonla özel
+Tailscale ağı üzerinden panele erişim de eklendi. Ayrıntılar ve sınırlar için
+[iki dilli güncelleme notlarını](docs/2026-10-08-update.md) inceleyin.
 
 Atlas Trade, Binance USDⓈ-M Futures verisini kendisi alan, likit pariteleri tarayan,
 trend + momentum + volatilite filtresi kullanan ve pozisyon riskini otomatik
 hesaplayan bir işlem botudur. Yanında Türkçe, yerel bir kontrol paneli bulunur.
 
-Bu belgenin İngilizce sürümüne üstteki **English** bağlantısından geçebilirsiniz.
-Dil seçimi dokümantasyon içindir; uygulama paneli şu anda Türkçedir.
-
 > Hiçbir strateji kâr garantisi vermez. Varsayılan kurulum gerçek para kullanmaz.
 
 ## En kolay kullanım
 
-### İndirme
+### İndirme ve kurulum
 
-Git kuruluysa PowerShell'de aşağıdaki komutları kullanın:
+Python 3.12 veya üzeri, Node.js 22.13 veya üzeri ve Git gerekir. Windows
+PowerShell'de:
 
 ```powershell
 git clone https://github.com/muhammetuyan/binance-futures-bot.git
 cd binance-futures-bot
-```
-
-Alternatif olarak GitHub'daki **Code → Download ZIP** seçeneğinden indirip
-ZIP'i çıkartın ve çıkartılan proje klasöründe terminal açın.
-
-### Kurulum
-
-İlk kurulumda Python 3.12 veya üzeri ve Node.js 22.13 veya üzeri gerekir.
-Proje klasöründe aşağıdaki komutlarla bağımlılıkları kurun:
-
-```powershell
+python --version
+node --version
 python -m pip install "fastapi>=0.115,<1" "uvicorn>=0.34,<1"
 npm ci
 Copy-Item .env.example .env
 ```
 
-`.env` kopyasını yalnızca ilk kurulumda oluşturun; mevcut ayarlarınızı içeren
-`.env` dosyasının üzerine yazmayın. Kurulu sürümleri `python --version` ve
-`node --version` ile kontrol edebilirsiniz. Bağımlılık kurulumu ve piyasa
-verileri için internet bağlantısı gerekir.
-
-İsteğe bağlı olarak bağımlılıkları kurmadan önce ayrı bir Python ortamı açın:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-```
-
-Sanal ortam kullanıyorsanız doğru Python'un kullanılması için aşağıdaki elle
-başlatma yöntemini etkinleştirilmiş terminalden kullanın.
-
-Paper modunda API anahtarı gerekmez. Gerekirse anahtarları yalnızca yerel
-`.env` dosyasına yazın. `.env`, özel anahtarlar, günlükler ve `runtime/`
-altındaki hesap/işlem verileri GitHub'a eklenmez. `.env.example` boş anahtar
-alanları içeren paylaşılabilir şablondur.
+Alternatif olarak GitHub'dan **Code → Download ZIP** ile indirip çıkartın ve
+PowerShell'i proje klasöründe açın. `.env` kopyasını yalnızca ilk kurulumda
+oluşturun; var olan ayarlarınızın üzerine yazmayın. İsteğe bağlı Python sanal
+ortamı için bağımlılıkları kurmadan önce `python -m venv .venv` ve
+`.\.venv\Scripts\Activate.ps1` komutlarını çalıştırın.
 
 Proje klasöründeki **Atlas-Trade-Baslat.cmd** dosyasına çift tıklayın. Bot ve
 dashboard arka planda açılır; tarayıcı otomatik olarak gelir.
@@ -64,37 +47,6 @@ dashboard arka planda açılır; tarayıcı otomatik olarak gelir.
 Kapatmak için **Atlas-Trade-Durdur.cmd** dosyasına çift tıklayın. Bu işlem yeni
 işlem açılmasını durdurur ve yerel programları kapatır. Gerçek/testnet Binance
 modunda borsaya daha önce yazılmış stop ve kâr alma emirleri korunur.
-
-### Elle başlatma
-
-Proje klasöründe iki terminal açın. İlk terminalde backend'i başlatın:
-
-```powershell
-python -m bot.service
-```
-
-İkinci terminalde kontrol panelini başlatın:
-
-```powershell
-npm run dev
-```
-
-Panel: <http://localhost:3000/>. Backend sağlık kontrolü:
-<http://127.0.0.1:8788/api/health>. Elle başlatılan süreçleri her terminalde
-`Ctrl+C` ile kapatabilirsiniz. Windows kısayolları Windows/PowerShell gerektirir.
-macOS/Linux'ta sanal ortam için `python3 -m venv .venv` ve
-`source .venv/bin/activate`, ilk `.env` kopyası için `cp .env.example .env`
-kullanın; ardından iki terminalde yukarıdaki başlatma komutlarını çalıştırın.
-
-### Sık karşılaşılan sorunlar
-
-- **Python/npm bulunamadı:** Gerekli sürümleri kurun, PATH seçeneğini etkinleştirin ve terminali yeniden açın.
-- **Python modülü eksik:** Bağımlılık kurulumunu botu çalıştırdığınız Python ile yapın.
-- **PowerShell npm.ps1 dosyasını engelliyor:** Windows'ta `npm.cmd ci` ve `npm.cmd run dev` kullanın.
-- **3000 veya 8788 portu dolu:** Mevcut Atlas örneğini Durdur kısayoluyla kapatın; portu başka bir uygulamanın kullanıp kullanmadığını kontrol edin.
-- **Uygulamanın yalnızca bir kısmı çalışıyor:** Durdur kısayolunu kullanıp yeniden başlatın. `runtime/backend.err.log` ve `runtime/dashboard.err.log` dosyalarını kontrol edin; bu günlükler GitHub'a yüklenmez.
-- **Aday veya işlem yok:** İnternet, backend sağlık kontrolü, mod, duraklatma durumu ve strateji/risk filtrelerini kontrol edin. Programın çalışması mutlaka işlem açacağı anlamına gelmez.
-- **Binance isteği başarısız:** Ağ bağlantısını ve seçilen Binance ortamına erişimi kontrol edin. İmzalı isteklerde doğru ortama ait anahtarları, yetkileri ve bilgisayar saatini doğrulayın.
 
 ## Varsayılan güvenli mod
 
@@ -105,10 +57,8 @@ kullanın; ardından iki terminalde yukarıdaki başlatma komutlarını çalış
 - Evren: 24 saatlik hacmi en az 25 milyon USDT olan en likit 30 USDT perpetual
 - Analiz mumları: 15 dakika giriş + 1 saat trend onayı; yalnızca tamamen kapanmış mumlar
 - Tarama sıklığı: 15 dakika
-- Risk: işlem başına %2
 - İşlem başına azami risk: %2
 - Günlük zarar kilidi: %10
-- Kırılım penceresi: son 12 adet 15 dakikalık mum (yaklaşık 3 saat)
 - Giriş filtresi: ADX, hacim, RSI ve minimum oynaklık doğrulaması
 - Üç RSI: 7/14/21 dönemleri 15 dk ve 1 saat için hesaplanır. 15 dk üçlüsü, RSI 14 bandı ve hızlı RSI yönüyle birlikte tek analiz oyu üretir; diğer analizlerin onayı varsa RSI tek başına veto değildir. RSI'lar bağımsız sinyaller değildir; kâr avantajı kanıtlanmış değildir.
 - Kaldıraç: 10x
@@ -120,6 +70,33 @@ kullanın; ardından iki terminalde yukarıdaki başlatma komutlarını çalış
 Bu değerler [config.toml](./config.toml) içinden değiştirilebilir. `symbols = []`
 dinamik tüm-coin taramasıdır. Belirli coinlerle sınırlamak için örneğin
 `symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]` yazın.
+
+## Telefonda ev dışından kullanım
+
+Dashboard bu kurulumda bilgisayarda çalışır; halka açık bir sunucuya yüklenmez.
+Bilgisayardaki Tailscale Serve, yerel dashboard'u yalnızca özel Tailscale ağına
+HTTPS ile aktarır. Binance API hizmeti 127.0.0.1:8788'de kalır ve dışarı açılmaz.
+Tarayıcı aynı adresteki `/api` bağlantısını kullandığından telefondaki localhost'a
+bağlanmaya çalışmaz. Kontrol istekleri özel başlıkla doğrulanır.
+
+1. Tailscale uygulamasını telefona kurun; bilgisayarın bulunduğu tailnet'e katılın ve cihaz için erişim izni olduğundan emin olun. Aynı kullanıcı hesabı şart değildir.
+2. Telefonun Tailscale bağlantısını açık bırakın.
+3. Dashboard'un altındaki “Telefon erişimi” bağlantısını telefon tarayıcısında açın.
+4. Yeni girişleri telefondan başlatabilir/duraklatabilir, açık ve geçmiş işlemleri görebilirsiniz.
+
+İlk kurulum veya bağlantı kontrolü için `Atlas-Telefon-Baglantisi.cmd` kullanılır.
+HTTPS onayı gerekiyorsa Tailscale'in gösterdiği sayfada kullanıcı onaylamalıdır.
+Bu bağlantı **Tailscale Serve**'dir; herkese açık **Funnel** veya modem port
+yönlendirmesi kullanılmaz. Tailnet'teki yetkili kullanıcılar botu kontrol edebilir; yalnızca güvendiğiniz kişileri davet edin.
+Başlat/durdur kısayolları aynı kalır. Bilgisayarın açık, internete bağlı ve
+uyumuyor olması gerekir. Bilgisayar kapanınca dashboard ve sanal stop takibi durur.
+
+## Son stabilite incelemesi
+
+[8 Ekim güncelleme notları](docs/2026-10-08-update.md) yeni özellikleri,
+düzeltmeleri ve doğrulama sınırlarını açıklar. Geçmiş sekmesinde operasyonel
+kapanışlar ve nedeni belirsiz toplu kapanışlar ayrı gösterilir. Filtreli sonuçlar
+kârlılık kanıtı değildir.
 
 ## Strateji
 
@@ -136,8 +113,10 @@ Kaynak: [Binance Kline Streams](https://developers.binance.com/en/docs/catalog/c
 
 Sabit mum kırılımı ve tüm koşulların birlikte sağlanması zorunluluğu kaldırıldı.
 Aktif giriş kuralı: **9 analizin en az 4'ü** onay vermeli. LONG ve SHORT ayrı sayılır;
-eşiği geçen daha yüksek sayılı yön aday olur, eşitlikte WAIT. 1 saat onayı,
-RSI, MSS veya FVG tek başına zorunlu değildir.
+eşiği geçen yön en az iki yönlü analizle desteklenmeli ve karşı yönden en az iki
+onay önde olmalı. ADX/hacim/oynaklık + tek yön bulgusu artık giriş açmaz.
+RSI ve FVG tek başına zorunlu değildir; 1 saat trendine karşı girişte MSS dönüş
+kapanışı gerekir. Bu kalite kurallarının kâr avantajı henüz doğrulanmış değildir.
 
 Oylar: 15 dk fiyat/EMA20 yönü + momentum (tek oy), 1 saat EMA trendi,
 RSI 7/14/21 + RSI 14 bandı (tek oy), MSS, likidite süpürmesi, FVG dönüş tepkisi,
@@ -186,16 +165,15 @@ test ortamına gider; paper hesabındaki 100 USDT bakiyeden ayrıdır.
 
 ## Gerçek Binance hesabı
 
-Canlı mod kodda desteklenir ancak paper ve testnet sonuçları yeterli görülmeden
-açılmamalıdır. API anahtarında yalnızca Futures işlem yetkisi verin, para çekme
-yetkisini kapatın ve mümkünse IP kısıtı kullanın. Canlı mod için üç ayrı kilidin
-birlikte açılması gerekir:
-
-```text
-ATLAS_MODE=live
-ATLAS_DRY_RUN=false
-ATLAS_ALLOW_LIVE=I_UNDERSTAND_THE_RISK
-```
+Dashboard'daki **Gerçek işleme geç** düğmesi iki aşamalıdır: Binance Futures
+bağlantısını salt-okunur hesap kontrolüyle doğrular, ardından gerçek para riskini
+ayrıca onaylamanızı ister. API anahtarını yalnızca Futures işlem izniyle oluşturun;
+para çekme iznini kapalı tutun ve mümkünse IP kısıtı kullanın. Anahtarlar bu
+Windows bilgisayarında DPAPI ile şifrelenir; API yanıtında gizli anahtar dönmez.
+Paper hesabında açık sanal pozisyon varsa Live geçişi engellenir. Kaldıraçlı Futures
+işlemleri yatırılan tutarın tamamını kaybettirebilir. API ayarlarına bu özel
+tailnet'teki yetkili kişiler erişebileceği için yalnızca güvendiğiniz kişileri
+ağa davet edin.
 
 ## Geçmiş veri testi
 

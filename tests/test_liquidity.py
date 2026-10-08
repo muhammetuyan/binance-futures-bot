@@ -15,6 +15,10 @@ def book():
 
 
 class LiquidityTests(unittest.TestCase):
+    def setUp(self):
+        self.patch_control = unittest.mock.patch('bot.engine.time.time', return_value=1.1)
+        self.patch_control.start()
+        self.addCleanup(self.patch_control.stop)
     def test_good_book_both_directions(self):
         for side in ('LONG', 'SHORT'):
             self.assertTrue(assess_order_book(book(), side, 400, 100, 2)['ok'])
@@ -39,6 +43,8 @@ class LiquidityTests(unittest.TestCase):
 
     def test_missing_book_fails_closed_and_execution_rechecks(self):
         broker, store = Mock(), Mock()
+        store.read_control.return_value = {"paused": False}
+        broker.monitoring_errors = {}
         broker.get_account_snapshot.return_value = {"equity": 100, "available_balance": 100}
         store.read_risk_state.return_value = {}
         engine = TradingEngine(Settings.load(), broker, store)
@@ -55,6 +61,8 @@ class LiquidityTests(unittest.TestCase):
 
     def test_fill_keeps_structural_stop_and_two_r_target(self):
         broker, store = Mock(), Mock()
+        store.read_control.return_value = {"paused": False}
+        broker.monitoring_errors = {}
         broker.get_account_snapshot.return_value = {"equity": 100, "available_balance": 100}
         store.read_risk_state.return_value = {}
         engine = TradingEngine(Settings.load(), broker, store)
@@ -73,6 +81,8 @@ class LiquidityTests(unittest.TestCase):
 
     def test_good_liquidity_does_not_bypass_insufficient_balance(self):
         broker, store = Mock(), Mock()
+        store.read_control.return_value = {"paused": False}
+        broker.monitoring_errors = {}
         store.read_risk_state.return_value = {}
         broker.get_account_snapshot.return_value = {"equity": 100, "available_balance": 1}
         engine = TradingEngine(Settings.load(), broker, store)

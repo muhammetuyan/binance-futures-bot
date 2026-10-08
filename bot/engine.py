@@ -17,6 +17,7 @@ from .exchange.base import Broker
 from .models import Position, Signal
 from .liquidity import assess_order_book
 from .risk import RiskManager, quantize_price
+from .review import review_trades
 from .store import RuntimeStore
 from .strategy import TrendMomentumStrategy
 
@@ -47,6 +48,9 @@ class TradingEngine:
             settings.leverage,
         )
         self._last_candle: dict[str, int] = {}
+        saved_executions = store.read_execution_state()
+        if isinstance(saved_executions, dict):
+            self._last_candle.update({f"executed:{symbol}": int(stamp) for symbol, stamp in saved_executions.items()})
         self._signals: deque[dict[str, Any]] = deque(maxlen=12)
         self._equity_curve: deque[dict[str, Any]] = deque(maxlen=96)
         self._day = datetime.now().astimezone().date()
@@ -61,6 +65,45 @@ class TradingEngine:
         self._symbols = list(settings.symbols)
         self._universe_updated_at = 0.0
         self._last_scan_bucket: int | None = None
+        self._pending_transition: tuple[Settings, Broker] | None = None
+        self._transition_lock = threading.Lock()
+
+    def request_reconfigure(self, settings: Settings, broker: Broker) -> None:
+        """Apply a mode/account change at the start of the next engine cycle."""
+        with self._transition_lock:
+            self._pending_transition = (settings, broker)
+
+    def _apply_pending_transition(self) -> None:
+        with self._transition_lock:
+            transition = self._pending_transition
+            self._pending_transition = None
+        if transition is None:
+            return
+        settings, broker = transition
+        self.settings = settings
+        self.broker = broker
+        self.strategy = TrendMomentumStrategy(
+            settings.minimum_signal_score, settings.minimum_adx,
+            settings.minimum_volume_ratio, settings.minimum_stop_percent,
+            settings.atr_stop_multiple, (settings.long_rsi_min, settings.long_rsi_max),
+            (settings.short_rsi_min, settings.short_rsi_max), triple_rsi=True,
+            minimum_confirmations=settings.minimum_confirmations,
+        )
+        self.risk = RiskManager(settings.risk_per_trade, settings.daily_loss_limit,
+                                settings.max_margin_fraction, settings.leverage)
+        self._symbols = list(settings.symbols)
+        self._universe_updated_at = 0.0
+        self._prepared_symbols.clear()
+        self._last_scan_bucket = None
+        self._signals.clear()
+        self._start_equity = 0.0
+        account = broker.get_account_snapshot()
+        if account["equity"] > 0:
+            self._start_equity = float(account["equity"])
+            self.store.write_risk_state(datetime.now().astimezone().date().isoformat(), self._start_equity)
+        self.store.write_control(paused=False)
+        self.store.append_event({"type": "mode_change", "mode": "PAPER" if settings.paper_mode else "LIVE"})
+        LOGGER.info("İşlem modu %s olarak değiştirildi", "PAPER" if settings.paper_mode else "LIVE")
 
     def run(self, stop_event: threading.Event) -> None:
         LOGGER.info("Atlas Trade motoru başladı")
@@ -90,11 +133,11 @@ class TradingEngine:
         self.store.write_status(current)
 
     def tick(self) -> None:
+        self._apply_pending_transition()
         paused = bool(self.store.read_control().get("paused", False))
         now_ms = int(time.time() * 1000)
         scan_interval_ms = self.settings.scan_interval_minutes * 60_000
         next_scan_at = ((now_ms // scan_interval_ms) + 1) * scan_interval_ms
-        symbols = self._active_symbols()
         latest_signals: list[Signal] = []
         last_candle_time: int | None = None
 
@@ -113,6 +156,9 @@ class TradingEngine:
             positions = self.broker.get_positions()
             account = self.broker.get_account_snapshot()
             trade_history = self.broker.get_trade_history(100)
+
+        # Always monitor open positions before refreshing the symbol universe.
+        symbols = self._active_symbols()
 
         scan_bucket = now_ms // (self.settings.scan_interval_minutes * 60_000)
         if self._last_scan_bucket != scan_bucket:
@@ -151,7 +197,9 @@ class TradingEngine:
                     reverse=True,
                 )
                 self._signals = deque(ranked_payloads[:12], maxlen=12)
-            self._last_scan_bucket = scan_bucket
+            # Failed symbols are retried next poll, not left unchecked for 15 min.
+            if len(latest_signals) == len(symbols):
+                self._last_scan_bucket = scan_bucket
         elif self._signals:
             last_candle_time = int(self._signals[0].get("timestamp", 0)) or None
 
@@ -175,6 +223,13 @@ class TradingEngine:
 
         if not paused and not daily_limit_hit and self.settings.order_execution_enabled:
             self._open_candidates(latest_signals, positions, account["equity"])
+
+        if account_available:
+            if hasattr(self.broker, "get_cached_positions"):
+                positions = self.broker.get_cached_positions()
+            account = self.broker.get_account_snapshot()
+            trade_history = self.broker.get_trade_history(100)
+        paused = bool(self.store.read_control().get("paused", False))
 
         equity = account["equity"]
         daily_pnl = equity - self._start_equity if self._start_equity > 0 else 0.0
@@ -229,6 +284,8 @@ class TradingEngine:
             "risk_per_trade_percent": self.settings.risk_per_trade * 100.0,
             "positions": [self._position_payload(position) for position in positions],
             "trade_history": trade_history,
+            "trade_review": review_trades(trade_history),
+            "monitoring_errors": getattr(self.broker, "monitoring_errors", {}),
             "signals": list(self._signals),
             "equity_curve": list(self._equity_curve),
             "last_candle_time": last_candle_time,
@@ -319,6 +376,16 @@ class TradingEngine:
         )
 
     def _execute_signal(self, signal: Signal, equity: float) -> bool:
+        # Re-read controls after the potentially long market scan.
+        if bool(self.store.read_control().get("paused", False)):
+            return False
+        if getattr(self.broker, "monitoring_errors", {}):
+            self.store.append_event({"type": "skipped", "symbol": signal.symbol, "message": "Açık pozisyon fiyatları güncel değil; yeni giriş engellendi"})
+            return False
+        age = int(time.time() * 1000) - signal.candle_close_time
+        if age < 0 or age > self._interval_ms(self.settings.interval):
+            self.store.append_event({"type": "skipped", "symbol": signal.symbol, "message": "Sinyal mumu bayat; yeni kapanış bekleniyor"})
+            return False
         snapshot = self.broker.get_account_snapshot()
         current_equity = float(snapshot["equity"])
         if not math.isfinite(current_equity) or current_equity <= 0:
@@ -381,11 +448,15 @@ class TradingEngine:
         if not math.isfinite(available) or available < required_balance:
             self.store.append_event({"type": "skipped", "symbol": signal.symbol, "message": "Boş teminat ve giriş komisyonu için bakiye yetersiz"})
             return False
+        if bool(self.store.read_control().get("paused", False)):
+            return False
         self.broker.prepare_symbol(signal.symbol, self.settings.leverage)
         stamp = str(signal.candle_close_time // 1000)[-10:]
         readable = "".join(character.lower() for character in signal.symbol if character.isascii() and character.isalnum())[:10]
         digest = hashlib.sha1(signal.symbol.encode("utf-8"), usedforsecurity=False).hexdigest()[:4]
         prefix = f"atlas-{readable}{digest}-{stamp}"
+        self.store.record_execution(signal.symbol, signal.candle_close_time)
+        self._last_candle[f"executed:{signal.symbol}"] = signal.candle_close_time
         entry = self.broker.place_market_order(signal.symbol, entry_side, quantity, f"{prefix}-e")
         fill_price = float(entry.get("avgPrice") or signal.price)
         if invalidation is not None:
@@ -404,8 +475,23 @@ class TradingEngine:
             LOGGER.exception("%s koruma emirleri kurulamadı; pozisyon kapatılıyor", signal.symbol)
             self.broker.close_position(signal.symbol, exit_side, quantity, f"{prefix}-safe")
             raise
+        context = {
+            "strategy_version": signal.indicators.get("strategy_version", "UNKNOWN"),
+            "candle_close_time": signal.candle_close_time,
+            "score": signal.score,
+            "confirmation": signal.indicators.get("confirmation", {}),
+            "checks": signal.checks,
+            "rsi": signal.indicators.get("rsi", {}),
+            "adx": signal.indicators.get("adx"),
+            "volume_ratio": signal.indicators.get("volume_ratio"),
+            "liquidity": checked.indicators.get("liquidity", {}),
+            "reason": signal.reason,
+        }
+        if hasattr(self.broker, "record_entry_context"):
+            self.broker.record_entry_context(signal.symbol, context)
         self.store.append_event({
             "type": "entry",
+            "analysis": context,
             "symbol": signal.symbol,
             "side": signal.side,
             "quantity": format(quantity, "f"),

@@ -4,6 +4,14 @@
 
 > **Work in progress:** this project is under active development. Features and trading rules may change.
 
+## Latest update — October 8, 2026
+
+The dashboard now supports English and Turkish. This release also improves
+paper-trade candle monitoring, recovery after interruptions, atomic state writes,
+position monitoring alerts, and duplicate-order prevention. A private Tailscale
+phone connection can show the dashboard away from the computer. See the
+[bilingual update notes](docs/2026-10-08-update.md) for details and limitations.
+
 Atlas Trade is a Binance USDⓈ-M Futures trading bot with a local Turkish-language dashboard. It scans liquid pairs, combines trend, momentum and volatility analysis, and calculates position risk. This documentation is available in English and Turkish; the dashboard itself is currently in Turkish.
 
 > No strategy guarantees profit. The default configuration uses a simulated paper account, not real funds.

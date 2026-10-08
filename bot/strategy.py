@@ -19,6 +19,7 @@ class TrendMomentumStrategy:
         short_rsi_range: tuple[float, float] = (0.0, 100.0),
         triple_rsi: bool = False,
         minimum_confirmations: int = 4,
+        quality_guard: bool = True,
     ) -> None:
         self.minimum_score = minimum_score  # Teminat puanının tabanı; giriş vetosu değil.
         if not 1 <= minimum_confirmations <= 9:
@@ -31,6 +32,7 @@ class TrendMomentumStrategy:
         self.long_rsi_range = long_rsi_range
         self.short_rsi_range = short_rsi_range
         self.triple_rsi = triple_rsi
+        self.quality_guard = quality_guard
 
     @staticmethod
     def choose_direction(checks: dict[str, dict[str, bool]], minimum: int = 4) -> tuple[str, dict[str, int]]:
@@ -116,6 +118,19 @@ class TrendMomentumStrategy:
                 "oynaklık": stop_percent >= self.minimum_stop_percent,
             }
         best_side, counts = self.choose_direction(directional_checks, self.minimum_confirmations)
+        quality_reason = ""
+        direction_counts = {side: sum(value for name, value in items.items() if name not in {"trend gücü (ADX)", "hacim", "oynaklık"}) for side, items in directional_checks.items()}
+        if self.quality_guard and best_side != "WAIT":
+            opposite = "SHORT" if best_side == "LONG" else "LONG"
+            if direction_counts[best_side] < 2:
+                quality_reason = "Yön desteği zayıf: en az iki yönlü analiz gerekli"
+            elif counts[best_side] - counts[opposite] < 2:
+                quality_reason = "LONG/SHORT çelişkisi: en az iki onay farkı gerekli"
+            # Countertrend entries remain possible, but require a genuine reversal.
+            elif directional_checks[opposite]["1 saat trend"] and not directional_checks[best_side]["MSS kapanış onayı"]:
+                quality_reason = "1 saat trendine karşı giriş için MSS dönüş kapanışı gerekli"
+            if quality_reason:
+                best_side = "WAIT"
         inspecting_side = best_side if best_side != "WAIT" else ("LONG" if counts["LONG"] >= counts["SHORT"] else "SHORT")
         checks = directional_checks[inspecting_side]
         confirmed = counts[inspecting_side]
@@ -125,7 +140,9 @@ class TrendMomentumStrategy:
             best_score = round(self.minimum_score + (100 - self.minimum_score) * (confirmed - self.minimum_confirmations) / max(1, total - self.minimum_confirmations))
         else:
             best_score = round(self.minimum_score * confirmed / self.minimum_confirmations)
-        if current_atr <= 0 or close <= 0:
+        if quality_reason:
+            decision_reason = quality_reason
+        elif current_atr <= 0 or close <= 0:
             best_side = "WAIT"
             decision_reason = "Geçerli fiyat ve stop mesafesi yok"
         elif counts["LONG"] == counts["SHORT"]:
@@ -157,6 +174,8 @@ class TrendMomentumStrategy:
             indicators={
                 "confirmation": {"minimum": self.minimum_confirmations, "total": total, "long": counts["LONG"], "short": counts["SHORT"], "inspected_side": inspecting_side, "eligible": best_side != "WAIT", "reason": decision_reason},
                 "directional_checks": directional_checks,
+                "directional_counts": direction_counts,
+                "strategy_version": "DIRECTION_QUALITY_V2",
                 "structure": structure,
                 "invalidation": invalidation,
                 "risk_distance": risk_distance,

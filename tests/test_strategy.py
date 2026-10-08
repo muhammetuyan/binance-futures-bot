@@ -44,13 +44,13 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(signal.indicators['higher_rsi'], signal.indicators['rsi'])
         self.assertTrue(signal.checks['RSI 7 / 14 / 21 onayı'])
 
-    def test_failed_rsi_does_not_veto_four_other_approvals(self):
+    def test_conflicting_structure_votes_wait_even_with_four_approvals(self):
         def readings(closes, period):
             value = {7: 60.0, 14: 58.0, 21: 55.0}[period]
             return [value + 1] * (len(closes) - 1) + [value]
         with patch('bot.strategy.rsi', side_effect=readings), patch('bot.strategy.analyze_structure', return_value=valid_structure()):
             signal = TrendMomentumStrategy(70, triple_rsi=True).analyze('TESTUSDT', trending_candles(1))
-        self.assertEqual(signal.side, 'LONG')
+        self.assertEqual(signal.side, 'WAIT')
         self.assertFalse(signal.checks['RSI 7 / 14 / 21 onayı'])
         self.assertGreaterEqual(signal.indicators['confirmation']['long'], 4)
 
@@ -61,16 +61,16 @@ class StrategyTests(unittest.TestCase):
         self.assertEqual(TrendMomentumStrategy.rsi_confirmation((10, 40, 40), 11), (False, False))
         self.assertEqual(TrendMomentumStrategy.rsi_confirmation((50, 50, 50), 50), (False, False))
 
-    def test_exactly_four_approvals_can_enter_without_mss_or_fvg(self):
+    def test_three_neutral_checks_and_one_direction_are_not_enough(self):
         signal = TrendMomentumStrategy(70, triple_rsi=True).analyze("BTCUSDT", trending_candles(1))
-        self.assertEqual(signal.side, "LONG")
+        self.assertEqual(signal.side, "WAIT")
         self.assertEqual(signal.indicators["confirmation"]["long"], 4)
         self.assertEqual(signal.score, 70)
         self.assertFalse(signal.checks["MSS kapanış onayı"])
 
-    def test_four_approvals_can_enter_short(self):
+    def test_weak_short_direction_is_also_rejected(self):
         signal = TrendMomentumStrategy(70, triple_rsi=True).analyze("BTCUSDT", trending_candles(-1))
-        self.assertEqual(signal.side, "SHORT")
+        self.assertEqual(signal.side, "WAIT")
         self.assertEqual(signal.indicators["confirmation"]["short"], 4)
         self.assertFalse(signal.checks["MSS kapanış onayı"])
 
@@ -118,7 +118,7 @@ class StrategyTests(unittest.TestCase):
             70,
             long_rsi_range=(45.0, 72.0),
             triple_rsi=True,
-        ).analyze("BTCUSDT", trending_candles(1))
+        ).analyze("BTCUSDT", trending_candles(1), trending_candles(1))
         self.assertEqual(signal.side, "LONG")
         self.assertFalse(signal.checks["RSI 7 / 14 / 21 onayı"])
 
@@ -129,6 +129,18 @@ class StrategyTests(unittest.TestCase):
         )
         self.assertNotIn("son 12 mum", signal.reason)
         self.assertIn("MSS", signal.reason)
+
+    def test_exactly_four_well_supported_approvals_can_enter(self):
+        for direction, side in ((1, "LONG"), (-1, "SHORT")):
+            def readings(closes, period):
+                value = (60 if direction > 0 else 40)
+                return [value - direction] * (len(closes) - 1) + [value]
+            with patch('bot.strategy.rsi', side_effect=readings):
+                signal = TrendMomentumStrategy(85, triple_rsi=True, minimum_volume_ratio=2).analyze("TEST", trending_candles(direction))
+            self.assertEqual(signal.side, side)
+            self.assertEqual(signal.indicators['confirmation'][side.lower()], 4)
+            self.assertFalse(signal.checks['MSS kapanış onayı'])
+            self.assertFalse(signal.checks['FVG dönüş tepkisi'])
 
 
 if __name__ == "__main__":

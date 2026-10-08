@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
-import os
-import tempfile
 import threading
 import time
 from decimal import Decimal
@@ -12,6 +11,7 @@ from typing import Any
 
 from ..config import Settings
 from ..models import Candle, Position, SymbolRules
+from ..persistence import atomic_json_write
 from .binance_futures import BinanceFuturesClient
 
 
@@ -24,6 +24,7 @@ class PaperBroker:
         self.state_path = settings.runtime_dir / "paper_account.json"
         self._lock = threading.RLock()
         self._last_prices: dict[str, float] = {}
+        self.monitoring_errors: dict[str, str] = {}
         self._state = self._load_state()
 
     def discover_symbols(self, limit: int, minimum_quote_volume: float) -> list[str]:
@@ -33,7 +34,7 @@ class PaperBroker:
         candles = self.market.get_candles(symbol, interval, limit)
         if candles:
             self._last_prices[symbol] = candles[-1].close
-            self._settle_if_triggered(symbol, candles)
+            # Analysis candles must never settle trades (their wick can predate entry).
         return candles
 
     def get_order_book(self, symbol: str) -> dict[str, Any]:
@@ -45,12 +46,26 @@ class PaperBroker:
     def get_positions(self) -> list[Position]:
         for symbol in list(self._state["positions"]):
             try:
-                candles = self.market.get_candles(symbol, "1m", 3)
+                item = self._state["positions"][symbol]
+                start = int(item.get("monitor_since", (int(item["entry_time"]) // 60_000 + 1) * 60_000))
+                if start > int(time.time() * 1000) or not hasattr(self.market, "get_monitoring_candles"):
+                    # In the entry minute use the current quote, never old wicks.
+                    candles = self.market.get_candles(symbol, "1m", 3)
+                else:
+                    candles = self.market.get_monitoring_candles(symbol, start)
                 if candles:
                     self._last_prices[symbol] = candles[-1].close
                     self._settle_if_triggered(symbol, candles)
-            except Exception:
-                continue
+                if not candles or candles[-1].close_time < int(time.time() * 1000) - 60_000:
+                    self.monitoring_errors[symbol] = "Eksik 1 dk mumları tamamlanıyor; yeni girişler bekliyor"
+                    continue
+                self.monitoring_errors.pop(symbol, None)
+            except Exception as exc:
+                self.monitoring_errors[symbol] = str(exc)
+                logging.getLogger("atlas.paper").warning("%s pozisyon takibi başarısız: %s", symbol, exc)
+        return self.get_cached_positions()
+
+    def get_cached_positions(self) -> list[Position]:
         output: list[Position] = []
         with self._lock:
             for symbol, item in self._state["positions"].items():
@@ -94,11 +109,11 @@ class PaperBroker:
         with self._lock:
             if symbol in self._state["positions"]:
                 raise RuntimeError(f"{symbol} için zaten açık paper pozisyonu var")
-            price = self._last_prices.get(symbol)
-            if not price:
-                candles = self.market.get_candles(symbol, self.settings.interval, 2)
-                price = candles[-1].close
-                self._last_prices[symbol] = price
+            candles = self.market.get_candles(symbol, "1m", 2)
+            if not candles or int(time.time() * 1000) - candles[-1].open_time > 120_000:
+                raise RuntimeError("Paper giriş için güncel fiyat alınamadı")
+            price = candles[-1].close
+            self._last_prices[symbol] = price
             signed_quantity = float(quantity) if side == "BUY" else -float(quantity)
             if side not in {"BUY", "SELL"} or not math.isfinite(float(quantity)) or quantity <= 0 or not math.isfinite(price) or price <= 0:
                 raise ValueError("Paper emir fiyatı, yönü veya miktarı geçersiz")
@@ -111,6 +126,7 @@ class PaperBroker:
                 "amount": signed_quantity,
                 "entry_price": price,
                 "entry_time": int(time.time() * 1000),
+                "monitor_since": (int(time.time() * 1000) // 60_000 + 1) * 60_000,
                 "last_checked": int(time.time() * 1000),
                 "stop": None,
                 "take_profit": None,
@@ -173,9 +189,10 @@ class PaperBroker:
             position = self._state["positions"].get(symbol)
             if not position:
                 return
-            relevant = [candle for candle in candles if candle.close_time > int(position.get("last_checked", 0))]
-            if not relevant:
-                return
+            now = int(time.time() * 1000)
+            # Only completed, one-minute bars fully after entry may use high/low.
+            start = int(position.get("monitor_since", (int(position["entry_time"]) // 60_000 + 1) * 60_000))
+            relevant = sorted([c for c in candles if c.open_time >= start and c.close_time < now and c.close_time - c.open_time < 60_000], key=lambda c: c.open_time)
             amount = float(position["amount"])
             stop = position.get("stop")
             take_profit = position.get("take_profit")
@@ -183,15 +200,28 @@ class PaperBroker:
                 stop_hit = stop is not None and (candle.low <= stop if amount > 0 else candle.high >= stop)
                 take_hit = take_profit is not None and (candle.high >= take_profit if amount > 0 else candle.low <= take_profit)
                 if stop_hit:
-                    self._close(symbol, float(stop), "STOP")
+                    fill = min(float(stop), candle.open) if amount > 0 else max(float(stop), candle.open)
+                    self._close(symbol, fill, "STOP", candle.close_time, ambiguous=take_hit)
                     return
                 if take_hit:
-                    self._close(symbol, float(take_profit), "TAKE_PROFIT")
+                    self._close(symbol, float(take_profit), "TAKE_PROFIT", candle.close_time)
                     return
-            position["last_checked"] = relevant[-1].close_time
+            if relevant:
+                position["monitor_since"] = relevant[-1].close_time + 1
+            # A forming bar's range contains pre-entry movement. Its current quote
+            # is safe to use only when all preceding monitoring bars are caught up.
+            if candles:
+                latest = max(candles, key=lambda c: c.open_time)
+                caught_up = int(position.get("monitor_since", start)) >= now // 60_000 * 60_000
+                if latest.close_time >= now and caught_up:
+                    stop_hit = stop is not None and (latest.close <= stop if amount > 0 else latest.close >= stop)
+                    take_hit = take_profit is not None and (latest.close >= take_profit if amount > 0 else latest.close <= take_profit)
+                    if stop_hit or take_hit:
+                        self._close(symbol, latest.close if stop_hit else float(take_profit), "STOP" if stop_hit else "TAKE_PROFIT", now)
+                        return
             self._save_state()
 
-    def _close(self, symbol: str, exit_price: float, reason: str) -> None:
+    def _close(self, symbol: str, exit_price: float, reason: str, closed_at: int | None = None, ambiguous: bool = False) -> None:
         with self._lock:
             item = self._state["positions"].pop(symbol, None)
             if not item:
@@ -207,7 +237,12 @@ class PaperBroker:
                 "exit": exit_price,
                 "pnl": pnl - fee - float(item.get("entry_fee", 0.0)),
                 "reason": reason,
-                "closed_at": int(time.time() * 1000),
+                "closed_at": closed_at or int(time.time() * 1000),
+                "processed_at": int(time.time() * 1000),
+                "entry_time": item.get("entry_time"),
+                "entry_context": item.get("entry_context", {}),
+                "ambiguous_bar": ambiguous,
+                "execution_version": "PAPER_1M_V2",
             })
             self._state["trades"] = self._state["trades"][-200:]
             self._save_state()
@@ -216,20 +251,24 @@ class PaperBroker:
         try:
             with self.state_path.open("r", encoding="utf-8") as handle:
                 state = json.load(handle)
-            if isinstance(state, dict) and "balance" in state and "positions" in state:
+            if (isinstance(state, dict) and "balance" in state and
+                    isinstance(state.get("positions"), dict) and
+                    isinstance(state.get("trades", []), list) and
+                    math.isfinite(float(state["balance"]))):
                 state.setdefault("trades", [])
                 return state
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            pass
+            raise ValueError("Paper hesap dosyasının yapısı geçersiz")
+        except FileNotFoundError:
+            return {"balance": self.settings.paper_balance, "positions": {}, "trades": []}
+        except (json.JSONDecodeError, OSError, TypeError, ValueError) as exc:
+            raise RuntimeError("Paper hesap dosyası okunamadı; bakiye sıfırlanmadı ve işlem açılmadı") from exc
         return {"balance": self.settings.paper_balance, "positions": {}, "trades": []}
 
     def _save_state(self) -> None:
-        self.state_path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary_name = tempfile.mkstemp(prefix="paper-", suffix=".tmp", dir=self.state_path.parent)
-        try:
-            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-                json.dump(self._state, handle, ensure_ascii=False, indent=2)
-            os.replace(temporary_name, self.state_path)
-        finally:
-            if os.path.exists(temporary_name):
-                os.unlink(temporary_name)
+        atomic_json_write(self.state_path, self._state)
+
+    def record_entry_context(self, symbol: str, context: dict[str, Any]) -> None:
+        with self._lock:
+            if symbol in self._state["positions"]:
+                self._state["positions"][symbol]["entry_context"] = context
+                self._save_state()

@@ -1,7 +1,7 @@
 import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions, type ViteDevServer } from 'vite';
 import hostingConfig from './.openai/hosting.json' with { type: 'json' };
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -46,10 +46,36 @@ export default defineConfig(async () => {
 
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      host: '127.0.0.1',
+      port: 3000,
+      strictPort: true,
+      allowedHosts: process.env.ATLAS_REMOTE_HOST ? [process.env.ATLAS_REMOTE_HOST] : [],
+      ...(isCodexSeatbeltSandbox ? { watch: { useFsEvents: false, usePolling: true } } : {}),
+      proxy: {
+        '^/api/(status|health|control/(pause|resume)|live/(check|activate))$': {
+          target: 'http://127.0.0.1:8788',
+          configure(proxy: Parameters<NonNullable<ProxyOptions['configure']>>[0]) {
+            proxy.on('proxyReq', (request) => request.setHeader('origin', 'http://localhost:3000'));
+          },
+        },
+      },
+    },
     plugins: [
+      {
+        name: 'atlas-control-boundary',
+        configureServer(server: ViteDevServer) {
+          server.middlewares.use((request, response, next) => {
+            if ((request.url?.startsWith('/api/control/') || request.url?.startsWith('/api/live/')) &&
+                (request.method !== 'POST' || request.headers['x-atlas-control'] !== '1')) {
+              response.statusCode = 403;
+              response.end('Dashboard kontrol doğrulaması gerekli');
+              return;
+            }
+            next();
+          });
+        },
+      },
       vinext(),
       sites(),
       cloudflare({
